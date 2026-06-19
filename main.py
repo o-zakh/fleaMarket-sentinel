@@ -51,7 +51,7 @@ DEFAULT_TRACKED_CHATS = ['@baraxolka_in_armenia', '@erevan_baraxlanet', '@baraho
 TRACKED_CHATS = []
 
 # Начальный список искомых товаров
-DEFAULT_SEARCH_ITEMS = ['стол', 'кресло', 'стул']
+DEFAULT_SEARCH_ITEMS = ['стол', 'кресло', 'стул', 'велосипед']
 SEARCH_ITEMS = []
 
 # Начальный список стоп-слов
@@ -146,17 +146,17 @@ def save_ignored():
 def parse_with_gemini(text: str):
     """Вызывает Gemini 3.1 Flash Lite для вычленения характеристик товара"""
     if not AI_ENABLED or not SEARCH_ITEMS:
-        return None
+        return {"error": "ИИ выключен или список поиска пуст"}
     try:
-        prompt = f"Проанализируй текст объявления о продаже б/у вещи и определи параметры в формате JSON.\n\nСодержимое:\n{text}"
+        prompt = f"Проанализируй текст объявления о продаже б/у вещи и определи параметры в формате JSON.\nСодержимое:\n{text}"
         
         response_schema = {
             "type": "OBJECT",
             "properties": {
-                "itemName": {"type": "STRING", "description": "Название товара, например, 'Стол IKEA регулируемый'"},
-                "price": {"type": "INTEGER", "description": "Сумма цены за штуку в виде целого числа (0 если не найдена)"},
-                "currency": {"type": "STRING", "description": "Символ или буквенный код валюты (AMD, GEL, RUB, USD)"},
-                "condition": {"type": "STRING", "description": "Состояние товара (например, 'новое', 'б/у в хорошем состоянии', 'б/у с дефектами')"}
+                "itemName": {"type": "STRING", "description": "Краткое название товара (например, 'Офисный стол')"},
+                "price": {"type": "INTEGER", "description": "Сумма в виде чистого целого числа (например, если '27 000 др', то 27000. Если '8000рублей', то 8000)"},
+                "currency": {"type": "STRING", "description": "Буквенный код валюты: AMD, RUB, USD, EUR или GEL."},
+                "condition": {"type": "STRING", "description": "Состояние товара (например, 'новое', 'б/у', 'не указано')"}
             },
             "required": ["itemName", "price", "currency", "condition"]
         }
@@ -165,15 +165,28 @@ def parse_with_gemini(text: str):
             model='gemini-3.1-flash-lite',
             contents=prompt,
             config=types.GenerateContentConfig(
-                system_instruction="Ты профессиональный парсер объявлений о купле-продаже б/у товаров. Твоя задача — извлечь данные о товаре: название, цена, валюта и состояние.",
+                system_instruction="Ты парсер объявлений. Твоя задача — извлечь точные данные о товаре: название, чистая цена (integer), код валюты (AMD, RUB, USD) и состояние. Строго соблюдай типы.",
                 response_mime_type="application/json",
-                response_schema=response_schema
+                response_schema=response_schema,
+                temperature=0.1
             )
         )
-        return json.loads(response.text)
+        
+        # Очищаем ответ от маркдауна (некоторые модели ошибочно оборачивают JSON)
+        raw_text = response.text.strip()
+        if raw_text.startswith("```"):
+            lines = raw_text.split('\n')
+            if lines[0].startswith("```"): lines = lines[1:]
+            if lines[-1].startswith("```"): lines = lines[:-1]
+            raw_text = "\n".join(lines).strip()
+            
+        data = json.loads(raw_text)
+        data["error"] = None
+        return data
     except Exception as e:
-        print(f"[ИИ Ошибка] Не удалось распарсить через Gemini: {e}. Переключаемся на локальные значения.")
-        return None
+        err_msg = str(e)
+        print(f"[ИИ Ошибка] Не удалось распарсить через Gemini: {err_msg}")
+        return {"error": err_msg}
 
 def check_local_match(text: str):
     """Буквенный поиск ключевых слов с регулярными выражениями"""
@@ -413,15 +426,32 @@ async def handle_incoming_listings_handler(event):
     parsed_currency = "AMD"
     parsed_item_name = matched_search_key.capitalize()
     parsed_condition = "не указано"
+    ai_status_text = ""
 
     if AI_ENABLED:
         print("🧠 Использование Gemini для аккуратного вычленения данных...")
         ai_data = parse_with_gemini(message_text)
-        if ai_data:
+        if ai_data and not ai_data.get("error"):
             parsed_item_name = ai_data.get("itemName", parsed_item_name)
             parsed_condition = ai_data.get("condition", "не указано")
-            parsed_price = ai_data.get("price", 0)
+            
+            # Извлекаем цену корректно, даже если это 0
+            price_val = ai_data.get("price")
+            if price_val is not None:
+                try:
+                    parsed_price = int(price_val)
+                except:
+                    parsed_price = 0
+            else:
+                parsed_price = 0
+
             parsed_currency = ai_data.get("currency", "AMD")
+            ai_status_text = "Анализ от ИИ: ✅"
+        else:
+            err_msg = ai_data.get("error", "Неизвестная ошибка") if ai_data else "Пустой ответ"
+            ai_status_text = f"Анализ от ИИ: ❌ - '{err_msg}'"
+    else:
+        ai_status_text = "Анализ от ИИ: ❌ - 'Выключен'"
 
     # Строим ссылку на оригинальный пост в Телеграм
     message_id = event.message.id
@@ -442,7 +472,8 @@ async def handle_incoming_listings_handler(event):
         f"🔗 Оригинальный пост: {msg_link}\n"
         f"💡 Вердикт поиска: *{reason}*\n"
         f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n\n"
-        f"{message_text}"
+        f"{message_text}\n\n"
+        f"{ai_status_text}"
     )
 
     try:
