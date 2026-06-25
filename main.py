@@ -26,6 +26,19 @@ import os
 import re
 import json
 import asyncio
+import socket
+
+# Включаем принудительный IPv6 для обхода блокировок геолокации Gemini (например, в Нидерландах)
+orig_getaddrinfo = socket.getaddrinfo
+def getaddrinfo_ipv6(host, port, family=0, type=0, proto=0, flags=0):
+    responses = orig_getaddrinfo(host, port, family, type, proto, flags)
+    # Сначала пытаемся вернуть IPv6 адреса
+    ipv6_responses = [res for res in responses if res[0] == socket.AF_INET6]
+    if ipv6_responses:
+        return ipv6_responses
+    return responses
+socket.getaddrinfo = getaddrinfo_ipv6
+
 from telethon import TelegramClient, events
 
 # ================= НАСТРОЙКИ С ПАНЕЛИ УПРАВЛЕНИЯ =================
@@ -54,11 +67,11 @@ DEFAULT_TRACKED_CHATS = ['@baraxolka_in_armenia', '@erevan_baraxlanet', '@baraho
 TRACKED_CHATS = []
 
 # Начальный список искомых товаров
-DEFAULT_SEARCH_ITEMS = ['стол', 'кресло', 'стул', 'a1000gl', 'kepler', '120см', 'velmoraofficiall', 'amvr', '120x', '120х']
+DEFAULT_SEARCH_ITEMS = ['стол', 'кресло', 'стул']
 SEARCH_ITEMS = []
 
 # Начальный список стоп-слов
-DEFAULT_IGNORED_WORDS = ['реклама', 'работа', 'вакансия']
+DEFAULT_IGNORED_WORDS = ['реклама', 'работа', 'вакансия', '120х', '120x', 'amvr', 'velmoraofficiall', '120см', 'kepler', 'a1000gl']
 IGNORED_WORDS = []
 
 # Интеграция с Gemini ИИ для расширенного анализа
@@ -151,10 +164,10 @@ def parse_with_gemini(text: str):
     if not AI_ENABLED or not SEARCH_ITEMS:
         return {"error": "ИИ выключен или список поиска пуст"}
     try:
-        prompt = f"""Проанализируй текст объявления о продаже б/у вещи и определи параметры в формате JSON.
+        prompt = (f"""Проанализируй текст объявления о продаже б/у вещи и определи параметры в формате JSON.
 
 Содержимое:
-{text}"""
+{text}""")
         
         response_schema = {
             "type": "OBJECT",
@@ -168,7 +181,7 @@ def parse_with_gemini(text: str):
         }
 
         response = ai.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.1-flash-lite',
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction="Ты парсер объявлений. Твоя задача — извлечь точные данные о товаре: название, чистая цена (integer), код валюты (AMD, RUB, USD) и состояние. Строго соблюдай типы.",
