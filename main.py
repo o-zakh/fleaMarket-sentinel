@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Telegram FleaMarket Sentinel - Автоматический фильтр и поисковик товаров в барахолках
-Сгенерировано в консоли: 19.06.2026
+Сгенерировано в консоли: 25.06.2026
 
 Особенности:
 1. Мониторит входящие посты в группах барахолок
@@ -46,12 +46,15 @@ ITEMS_FILE = "searched_items.json"
 CHATS_FILE = "tracked_chats.json"
 IGNORED_FILE = "ignored_words.json"
 
+# Приватный чат/группа для отправки находок и удаленного управления ботом
+FORWARD_TARGET_CHAT = '@myOwnGroup4651'
+
 # Начальный список целевых групп
 DEFAULT_TRACKED_CHATS = ['@baraxolka_in_armenia', '@erevan_baraxlanet', '@baraholka_yerevan_armenia', '@baraxolka_armenia', '@MarketYerevan0', '@myOwnGroup4651']
 TRACKED_CHATS = []
 
 # Начальный список искомых товаров
-DEFAULT_SEARCH_ITEMS = ['стол', 'кресло', 'стул', 'велосипед']
+DEFAULT_SEARCH_ITEMS = ['стол', 'кресло', 'стул', 'a1000gl', 'kepler', '120см', 'velmoraofficiall', 'amvr', '120x', '120х']
 SEARCH_ITEMS = []
 
 # Начальный список стоп-слов
@@ -148,7 +151,10 @@ def parse_with_gemini(text: str):
     if not AI_ENABLED or not SEARCH_ITEMS:
         return {"error": "ИИ выключен или список поиска пуст"}
     try:
-        prompt = f"Проанализируй текст объявления о продаже б/у вещи и определи параметры в формате JSON.\nСодержимое:\n{text}"
+        prompt = f"""Проанализируй текст объявления о продаже б/у вещи и определи параметры в формате JSON.
+
+Содержимое:
+{text}"""
         
         response_schema = {
             "type": "OBJECT",
@@ -162,7 +168,7 @@ def parse_with_gemini(text: str):
         }
 
         response = ai.models.generate_content(
-            model='gemini-3.1-flash-lite',
+            model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction="Ты парсер объявлений. Твоя задача — извлечь точные данные о товаре: название, чистая цена (integer), код валюты (AMD, RUB, USD) и состояние. Строго соблюдай типы.",
@@ -244,7 +250,13 @@ async def handle_commands_from_target_chat(event):
             "**/addPublic** — Добавляет группу в список ожидания для объявлений.\n"
             "Пример: `/addPublic @baraholka`\n\n"
             "**/removePublic** — Убирает группу из списка ожидания.\n"
-            "Пример: `/removePublic @baraholka`"
+            "Пример: `/removePublic @baraholka`\n\n"
+            "**/listStop** — Показывает список стоп-слов.\n"
+            "Пример: `/listStop`\n\n"
+            "**/addStop** — Добавляет слово в список стоп-слов.\n"
+            "Пример: `/addStop продано`\n\n"
+            "**/removeStop** — Убирает слово из списка стоп-слов.\n"
+            "Пример: `/removeStop продано`"
         )
         await event.reply(help_text)
 
@@ -484,9 +496,6 @@ async def handle_incoming_listings_handler(event):
 
 
 # ================= ЗАПУСК СЕРВИСА =================
-
-# Приватный чат/группа для отправки находок и удаленного управления ботом
-FORWARD_TARGET_CHAT = '@myOwnGroup4651'
 
 async def main():
     print("🤖 Запуск Telegram FleaMarket Sentinel Юзербота...")
